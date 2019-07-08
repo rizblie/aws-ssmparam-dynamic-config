@@ -1,0 +1,18 @@
+{
+  "name": "greeting-service",
+  "version": "1.0.0",
+  "description": "Greeting service in docker",
+  "author": "Mike Rizzo <rizblie@gmail.com>",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "request": "^2.8.8",
+    "request-promise": "^4.2.0",
+    "body-parser": "^1.19.0",
+    "express": "^4.17.1",
+    "aws-sdk": "^2.474.0",
+    "aws-param-store": "^3.0.0"
+  }
+}

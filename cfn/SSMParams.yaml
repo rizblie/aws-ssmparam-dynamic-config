@@ -1,0 +1,98 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Creates SSM Params, Cloudwatch Event, and SNS Topic
+Parameters:
+  DefaultImageUrl:
+    Type: String
+  ConfigVersionParamName:
+    Type: String
+  ImageUrlParamName:
+    Type: String
+  GreetingParamName:
+    Type: String
+  FontsizeParamName:
+    Type: String
+  TopicName:
+    Type: String
+  EventRuleName:
+    Type: String
+
+Outputs:
+  TopicArn:
+    Description: SNS Topic ARN for changes
+    Value: !Ref ParamChangeTopic
+
+Resources:
+
+  ParameterConfigVersion:
+    Type: AWS::SSM::Parameter
+    Properties: 
+      Description: Config version
+      Name: !Ref ConfigVersionParamName
+      Type: String
+      Value: 1
+
+  ParameterImageUrl:
+    Type: AWS::SSM::Parameter
+    Properties: 
+      Description: Location of image to use in greeting
+      Name: !Ref ImageUrlParamName
+      Type: String
+      Value: !Sub ${DefaultImageUrl}
+
+  ParameterGreeting:
+    Type: AWS::SSM::Parameter
+    Properties: 
+      Description: Greeting string to use in HTML
+      Name: !Ref GreetingParamName
+      Type: String
+      Value: 'Hello'
+
+  ParameterFontsize:
+    Type: AWS::SSM::Parameter
+    Properties: 
+      Description: Font size string to use in HTML <font> element
+      Name: !Ref FontsizeParamName
+      Type: String
+      Value: '3'
+
+  ParamChangeTopic:
+    Type: AWS::SNS::Topic
+    Properties: 
+      DisplayName: !Ref TopicName
+      TopicName: !Ref TopicName
+
+  ParamChangeEventRule:
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: Publish param change event to SNS topic
+      EventPattern:
+        source:
+          - aws.ssm
+        detail-type:
+          - Parameter Store Change
+        detail:
+          name:
+            - !Ref ConfigVersionParamName
+          operation:
+            - "Update"
+      Name: !Ref EventRuleName
+      State: ENABLED
+      Targets: 
+        - Arn: !Ref ParamChangeTopic
+          Id: ParamChangeTarget
+
+  ParamChangeTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties: 
+      PolicyDocument:
+        Id: ParamChangeTopicPolicy
+        Version: '2012-10-17'
+        Statement:
+          - Sid: ParamChange
+            Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref ParamChangeTopic
+      Topics: 
+        - !Ref ParamChangeTopic

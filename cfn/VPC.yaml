@@ -1,0 +1,155 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Creates VPC with two public subnets and two private subnet in eu-west-1
+
+Parameters:
+ VpcName:
+  Type: String
+
+Outputs:
+ VpcId:
+  Description: VPC ID
+  Value: !Ref MyVPC
+ ZoneAPublicSubnetId:
+  Description: Zone A Subnet Id
+  Value: !Ref PublicSubnetA
+ ZoneBPublicSubnetId:
+  Description: Zone B Subnet Id
+  Value: !Ref PublicSubnetB
+ ZoneAPrivateSubnetId:
+  Description: Zone A Subnet Id
+  Value: !Ref PrivateSubnetA
+ ZoneBPrivateSubnetId:
+  Description: Zone B Subnet Id
+  Value: !Ref PrivateSubnetB
+
+Resources:
+
+ MyVPC:
+  Type: AWS::EC2::VPC
+  Properties:
+   CidrBlock: "10.17.0.0/16"
+   InstanceTenancy: default
+   Tags:
+    - Key: Name
+      Value: !Ref VpcName
+
+ PublicSubnetA:
+  Type: AWS::EC2::Subnet
+  Properties:
+   AvailabilityZone: eu-west-1a
+   CidrBlock: "10.17.0.0/24"
+   Tags:
+     - Key: Name
+       Value: PublicSubnetA
+   VpcId: !Ref MyVPC
+
+ PublicSubnetB:
+  Type: AWS::EC2::Subnet
+  Properties:
+   AvailabilityZone: eu-west-1b
+   CidrBlock: "10.17.1.0/24"
+   Tags:
+    - Key: Name
+      Value: PublicSubnetB
+   VpcId: !Ref MyVPC
+
+ PublicRouteTable:
+  Type: AWS::EC2::RouteTable
+  Properties:
+   Tags:
+    - Key: Name
+      Value: PublicRouteTable
+   VpcId: !Ref MyVPC
+
+ PublicInternetGateway:
+  Type: AWS::EC2::InternetGateway
+  Properties:
+   Tags:
+    - Key: Name
+      Value: PublicInternetGateway
+
+ PublicSubnetARouteTableAssociation:
+  Type: AWS::EC2::SubnetRouteTableAssociation
+  Properties:
+   RouteTableId: !Ref PublicRouteTable
+   SubnetId: !Ref PublicSubnetA
+ 
+ PublicSubnetBRouteTableAssociation:
+  Type: AWS::EC2::SubnetRouteTableAssociation
+  Properties:
+   RouteTableId: !Ref PublicRouteTable
+   SubnetId: !Ref PublicSubnetB
+ 
+ PublicIGAttachment:
+  Type: AWS::EC2::VPCGatewayAttachment
+  Properties:
+   InternetGatewayId: !Ref PublicInternetGateway
+   VpcId: !Ref MyVPC
+
+ PublicDefaultRoute:
+  Type: AWS::EC2::Route
+  DependsOn: PublicIGAttachment
+  Properties:
+   DestinationCidrBlock: "0.0.0.0/0"
+   GatewayId: !Ref PublicInternetGateway
+   RouteTableId: !Ref PublicRouteTable
+
+ NATGatewayEIP:
+  DependsOn: PublicIGAttachment
+  Type: AWS::EC2::EIP
+  Properties:
+   Domain: vpc
+
+ NATGateway:
+  Type: AWS::EC2::NatGateway
+  Properties: 
+   AllocationId: !GetAtt NATGatewayEIP.AllocationId
+   SubnetId: !Ref PublicSubnetA
+
+
+ PrivateSubnetA:
+  Type: AWS::EC2::Subnet
+  Properties:
+   AvailabilityZone: eu-west-1a
+   CidrBlock: "10.17.8.0/24"
+   Tags:
+     - Key: Name
+       Value: PrivateSubnetA
+   VpcId: !Ref MyVPC
+
+ PrivateSubnetB:
+  Type: AWS::EC2::Subnet
+  Properties:
+   AvailabilityZone: eu-west-1b
+   CidrBlock: "10.17.9.0/24"
+   Tags:
+    - Key: Name
+      Value: PrivateSubnetB
+   VpcId: !Ref MyVPC
+
+ PrivateRouteTable:
+  Type: AWS::EC2::RouteTable
+  Properties:
+   Tags:
+    - Key: Name
+      Value: PrivateRouteTable
+   VpcId: !Ref MyVPC
+
+ PrivateSubnetARouteTableAssociation:
+  Type: AWS::EC2::SubnetRouteTableAssociation
+  Properties:
+   RouteTableId: !Ref PrivateRouteTable
+   SubnetId: !Ref PrivateSubnetA
+ 
+ PrivateSubnetBRouteTableAssociation:
+  Type: AWS::EC2::SubnetRouteTableAssociation
+  Properties:
+   RouteTableId: !Ref PrivateRouteTable
+   SubnetId: !Ref PrivateSubnetB
+
+ PrivateDefaultRoute:
+  Type: AWS::EC2::Route
+  Properties:
+   DestinationCidrBlock: "0.0.0.0/0"
+   NatGatewayId: !Ref NATGateway
+   RouteTableId: !Ref PrivateRouteTable

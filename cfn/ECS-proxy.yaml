@@ -1,0 +1,201 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Creates ECS task and service for proxy service
+
+Parameters:
+  ServiceName:
+    Type: String
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  Image:
+    Type: String
+  PrivateSubnetIdA:
+    Type: AWS::EC2::Subnet::Id
+  PrivateSubnetIdB:
+    Type: AWS::EC2::Subnet::Id
+  PublicSubnetIdA:
+    Type: AWS::EC2::Subnet::Id
+  PublicSubnetIdB:
+    Type: AWS::EC2::Subnet::Id
+  TopicArn:
+    Type: String
+  Prefix:
+    Type: String
+
+Outputs:
+  ServiceDnsName:
+    Description: DNS name for our service endpoint
+    Value: !GetAtt ALB.DNSName
+
+Resources:
+
+# Set up ECS Task definition
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service: "ecs-tasks.amazonaws.com"
+            Action: "sts:AssumeRole"
+      Policies:
+        -
+          PolicyName: !Sub ${Prefix}-${ServiceName}-TaskPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              -
+                Effect: "Allow"
+                Action: "ssm:GetParameters"
+                Resource: "*"
+
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service: "ecs-tasks.amazonaws.com"
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties: 
+      ContainerDefinitions: 
+        - Name: !Sub ${Prefix}-${ServiceName}-Container
+          Image: !Ref Image
+          Essential: true
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: greeting
+              awslogs-region: eu-west-1
+              awslogs-stream-prefix: !Sub ${Prefix}-${ServiceName}-
+          PortMappings:
+            - ContainerPort: 8080
+          Environment:
+            - Name: PARAM_CHANGE_TOPIC_ARN
+              Value: !Ref TopicArn
+      Cpu: 512
+      ExecutionRoleArn: !Ref ECSTaskExecutionRole
+      Family: !Sub ${Prefix}-${ServiceName}-Definition
+      Memory: 2048
+      NetworkMode: awsvpc
+      RequiresCompatibilities: 
+        - FARGATE
+      TaskRoleArn: !Ref TaskRole
+
+# Service ALB
+
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: !Sub ${ServiceName} ALB Security Group
+      GroupName: !Sub ${ServiceName} ALB Security Group
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      VpcId: !Ref VpcId
+
+  TaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: !Sub ${ServiceName} Task Security Group
+      GroupName: !Sub ${ServiceName} Task Security Group
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !GetAtt ALBSecurityGroup.GroupId
+      VpcId: !Ref VpcId
+
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      IpAddressType: ipv4
+      Name: !Sub ${Prefix}-${ServiceName}-ALB
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      Subnets:
+        - !Ref PublicSubnetIdA
+        - !Ref PublicSubnetIdB
+      Type: application
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ALB
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn: !Ref ALBTargetGroup
+
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties: 
+      HealthCheckEnabled: true
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /health
+      HealthCheckPort: 8080
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 5
+      UnhealthyThresholdCount: 2
+      Matcher: 
+        HttpCode: 200
+      Name: !Sub ${Prefix}-${ServiceName}-TargetGroup
+      Port: 8080
+      Protocol: HTTP
+      TargetGroupAttributes: 
+        - Key: deregistration_delay.timeout_seconds
+          Value: 300
+        - Key: slow_start.duration_seconds
+          Value: 0
+        - Key: stickiness.enabled
+          Value: false
+      TargetType: ip
+      VpcId: !Ref VpcId
+
+  GreetingService:
+    Type: AWS::ECS::Service
+    DependsOn: ALB
+    Properties:
+      Cluster:
+        Fn::ImportValue
+          !Sub ${Prefix}-Cluster
+      DeploymentConfiguration: 
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+      DesiredCount: 2
+      EnableECSManagedTags: false
+      HealthCheckGracePeriodSeconds: 10
+      LaunchType: FARGATE
+      LoadBalancers: 
+        - ContainerName: !Sub ${Prefix}-${ServiceName}-Container
+          ContainerPort: 8080
+          TargetGroupArn: !Ref ALBTargetGroup
+      NetworkConfiguration: 
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !Ref TaskSecurityGroup
+          Subnets:
+            - !Ref PrivateSubnetIdA
+            - !Ref PrivateSubnetIdB
+      SchedulingStrategy: REPLICA
+      ServiceName: !Sub ${Prefix}-${ServiceName}
+      TaskDefinition: !Ref TaskDefinition
+
+

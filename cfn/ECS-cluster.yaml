@@ -1,0 +1,417 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Creates ECS cluster, task and service for greeting service
+
+Parameters:
+  Prefix:
+    Type: String
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  ProxyImage:
+    Type: String
+  GreetingImage:
+    Type: String
+  PrivateSubnetIdA:
+    Type: AWS::EC2::Subnet::Id
+  PrivateSubnetIdB:
+    Type: AWS::EC2::Subnet::Id
+  PublicSubnetIdA:
+    Type: AWS::EC2::Subnet::Id
+  PublicSubnetIdB:
+    Type: AWS::EC2::Subnet::Id
+  ConfigVersionParamName:
+    Type: String
+  ImageUrlParamName:
+    Type: String
+  GreetingParamName:
+    Type: String
+  FontsizeParamName:
+    Type: String
+  TopicArn:
+    Type: String
+
+Outputs:
+  ProxyServiceDnsName:
+    Description: DNS name for our service endpoint
+    Value: !GetAtt ProxyALB.DNSName
+  GreetingServiceDnsName:
+    Description: DNS name for our service endpoint
+    Value: !GetAtt GreetingALB.DNSName
+
+Resources:
+
+  # Set up ECS Cluster
+
+  DemoCluster:
+    Type: AWS::ECS::Cluster
+    Properties: 
+      ClusterName: !Sub ${AWS::StackName}-Cluster
+
+
+# Proxy service
+
+  ProxyTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service: "ecs-tasks.amazonaws.com"
+            Action: "sts:AssumeRole"
+      Policies:
+        -
+          PolicyName: !Sub ${Prefix}-Proxy-TaskPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              -
+                Effect: "Allow"
+                Action:
+                  - "ssm:GetParameters"
+                  - "sns:Unsubscribe"
+                Resource: "*"
+              - Effect: "Allow"
+                Action:
+                  - "sns:Subscribe"
+                  - "sns:ConfirmSubscription"
+                Resource: !Ref TopicArn
+
+  ProxyECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service: "ecs-tasks.amazonaws.com"
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  ProxyTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties: 
+      ContainerDefinitions: 
+        - Name: !Sub ${Prefix}-Proxy-Container
+          Image: !Ref ProxyImage
+          Essential: true
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: greeting
+              awslogs-region: eu-west-1
+              awslogs-stream-prefix: !Sub ${Prefix}-Proxy-
+          PortMappings:
+            - ContainerPort: 8080
+          Environment:
+            - Name: PARAM_CHANGE_TOPIC_ARN
+              Value: !Ref TopicArn
+      Cpu: 512
+      ExecutionRoleArn: !Ref ProxyECSTaskExecutionRole
+      Family: !Sub ${Prefix}-Proxy-Definition
+      Memory: 2048
+      NetworkMode: awsvpc
+      RequiresCompatibilities: 
+        - FARGATE
+      TaskRoleArn: !Ref ProxyTaskRole
+
+# Proxy Service ALB
+
+  ProxyALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: !Sub Proxy ALB Security Group
+      GroupName: !Sub Proxy ALB Security Group
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      VpcId: !Ref VpcId
+
+  ProxyTaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: !Sub Proxy Task Security Group
+      GroupName: !Sub Proxy Task Security Group
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !GetAtt ProxyALBSecurityGroup.GroupId
+      VpcId: !Ref VpcId
+
+  ProxyALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      IpAddressType: ipv4
+      Name: !Sub ${Prefix}-Proxy-ALB
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref ProxyALBSecurityGroup
+      Subnets:
+        - !Ref PublicSubnetIdA
+        - !Ref PublicSubnetIdB
+      Type: application
+
+  ProxyALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ProxyALB
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn: !Ref ProxyALBTargetGroup
+
+  ProxyALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties: 
+      HealthCheckEnabled: true
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /health
+      HealthCheckPort: 8080
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 5
+      UnhealthyThresholdCount: 2
+      Matcher: 
+        HttpCode: 200
+      Name: !Sub ${Prefix}-Proxy-TargetGroup
+      Port: 8080
+      Protocol: HTTP
+      TargetGroupAttributes: 
+        - Key: deregistration_delay.timeout_seconds
+          Value: 300
+        - Key: slow_start.duration_seconds
+          Value: 0
+        - Key: stickiness.enabled
+          Value: false
+      TargetType: ip
+      VpcId: !Ref VpcId
+
+  ProxyService:
+    Type: AWS::ECS::Service
+    DependsOn: ProxyALB
+    Properties:
+      Cluster: !Ref DemoCluster
+      DeploymentConfiguration: 
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+      DesiredCount: 2
+      EnableECSManagedTags: false
+      HealthCheckGracePeriodSeconds: 10
+      LaunchType: FARGATE
+      LoadBalancers: 
+        - ContainerName: !Sub ${Prefix}-Proxy-Container
+          ContainerPort: 8080
+          TargetGroupArn: !Ref ProxyALBTargetGroup
+      NetworkConfiguration: 
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !Ref ProxyTaskSecurityGroup
+          Subnets:
+            - !Ref PrivateSubnetIdA
+            - !Ref PrivateSubnetIdB
+      SchedulingStrategy: REPLICA
+      ServiceName: !Sub ${Prefix}-Proxy
+      TaskDefinition: !Ref ProxyTaskDefinition
+
+# Greeting Service
+
+# Set up ECS Task definition
+
+  GreetingTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service: "ecs-tasks.amazonaws.com"
+            Action: "sts:AssumeRole"
+      Policies:
+        -
+          PolicyName: "GreetingTaskPolicy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              -
+                Effect: "Allow"
+                Action:
+                  - "ssm:GetParameters"
+                  - "sns:Unsubscribe"
+                Resource: "*"
+              - Effect: "Allow"
+                Action:
+                  - "sns:Subscribe"
+                  - "sns:ConfirmSubscription"
+                Resource: !Ref TopicArn
+
+
+  GreetingECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service: "ecs-tasks.amazonaws.com"
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  GreetingTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties: 
+      ContainerDefinitions: 
+        - Name: !Sub ${Prefix}-GreetingContainer
+          Image: !Ref GreetingImage
+          Essential: true
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: greeting
+              awslogs-region: eu-west-1
+              awslogs-stream-prefix: !Ref Prefix
+          PortMappings:
+            - ContainerPort: 8080
+          Environment:
+            - Name: CONFIG_VERSION_PARAM_NAME
+              Value: !Ref ConfigVersionParamName
+            - Name: IMAGEURL_PARAM_NAME
+              Value: !Ref ImageUrlParamName
+            - Name: GREETING_PARAM_NAME
+              Value: !Ref GreetingParamName
+            - Name: FONTSIZE_PARAM_NAME
+              Value: !Ref FontsizeParamName
+            - Name: PARAM_CHANGE_TOPIC_ARN
+              Value: !Ref TopicArn
+            - Name: PARAM_CHANGE_SNS_ENDPOINT
+              Value: !GetAtt ProxyALB.DNSName
+      Cpu: 512
+      ExecutionRoleArn: !Ref GreetingECSTaskExecutionRole
+      Family: !Sub ${Prefix}-GreetingTaskDefinition
+      Memory: 2048
+      NetworkMode: awsvpc
+      RequiresCompatibilities: 
+        - FARGATE
+      TaskRoleArn: !Ref GreetingTaskRole
+
+# Greeting service ALB
+
+  GreetingALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: Greeting ALB Security Group
+      GroupName: Greeting ALB Security Group
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      VpcId: !Ref VpcId
+
+  GreetingTaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: Greeting Task Security Group
+      GroupName: Greeting Task Security Group
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !GetAtt GreetingALBSecurityGroup.GroupId
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !GetAtt ProxyTaskSecurityGroup.GroupId
+      VpcId: !Ref VpcId
+
+  GreetingALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      IpAddressType: ipv4
+      Name: !Sub ${Prefix}-GreetingALB
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref GreetingALBSecurityGroup
+      Subnets:
+        - !Ref PublicSubnetIdA
+        - !Ref PublicSubnetIdB
+      Type: application
+
+  GreetingALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref GreetingALB
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn: !Ref GreetingALBTargetGroup
+
+  GreetingALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties: 
+      HealthCheckEnabled: true
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /config
+      HealthCheckPort: 8080
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 5
+      UnhealthyThresholdCount: 2
+      Matcher: 
+        HttpCode: 200
+      Name: !Sub ${Prefix}-GreetingTargetGroup
+      Port: 8080
+      Protocol: HTTP
+      TargetGroupAttributes: 
+        - Key: deregistration_delay.timeout_seconds
+          Value: 300
+        - Key: slow_start.duration_seconds
+          Value: 0
+        - Key: stickiness.enabled
+          Value: false
+      TargetType: ip
+      VpcId: !Ref VpcId
+
+  GreetingService:
+    Type: AWS::ECS::Service
+    DependsOn: GreetingALB
+    Properties:
+      Cluster: !Ref DemoCluster
+      DeploymentConfiguration: 
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+      DesiredCount: 2
+      EnableECSManagedTags: false
+      HealthCheckGracePeriodSeconds: 10
+      LaunchType: FARGATE
+      LoadBalancers: 
+        - ContainerName: !Sub ${Prefix}-GreetingContainer
+          ContainerPort: 8080
+          TargetGroupArn: !Ref GreetingALBTargetGroup
+      NetworkConfiguration: 
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !Ref GreetingTaskSecurityGroup
+          Subnets:
+            - !Ref PrivateSubnetIdA
+            - !Ref PrivateSubnetIdB
+      SchedulingStrategy: REPLICA
+      ServiceName: !Sub ${Prefix}-Greeting
+      TaskDefinition: !Ref GreetingTaskDefinition
+
+

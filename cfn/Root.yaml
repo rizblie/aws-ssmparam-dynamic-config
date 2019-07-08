@@ -1,0 +1,51 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Root stack for dynamic config containers demo
+
+Resources:
+
+  DemoVpc:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: VPC.yaml
+      Parameters:
+        VpcName: !Sub ${AWS::StackName}-VPC
+
+  DemoSSMParams:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: SSMParams.yaml
+      Parameters:
+        DefaultImageUrl: 'https://micharizdemo.s3-eu-west-1.amazonaws.com/ssmparam-dynamic-config/images/CaptAmerica.png'
+        ConfigVersionParamName: !Sub /${AWS::StackName}/configVersion
+        ImageUrlParamName: !Sub /${AWS::StackName}/imageUrl
+        GreetingParamName: !Sub /${AWS::StackName}/greeting
+        FontsizeParamName: !Sub /${AWS::StackName}/fontSize
+        TopicName:
+          Fn::Sub: ${AWS::StackName}-ParamChanges
+        EventRuleName:
+          Fn::Sub: ${AWS::StackName}-ParamChangeRule
+
+  # Set up ECS Cluster
+
+  DemoCluster:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ECS-cluster.yaml
+      Parameters:
+        VpcId: !GetAtt DemoVpc.Outputs.VpcId
+        Prefix: !Sub ${AWS::StackName}
+        ProxyImage: 845041152230.dkr.ecr.eu-west-1.amazonaws.com/rizblie/not_proxy
+        GreetingImage: 845041152230.dkr.ecr.eu-west-1.amazonaws.com/rizblie/greeting
+        ConfigVersionParamName: !Sub /${AWS::StackName}/configVersion
+        ImageUrlParamName: !Sub /${AWS::StackName}/imageUrl
+        GreetingParamName: !Sub /${AWS::StackName}/greeting
+        FontsizeParamName: !Sub /${AWS::StackName}/fontSize
+        TopicArn: !GetAtt DemoSSMParams.Outputs.TopicArn
+        PrivateSubnetIdA:
+          !GetAtt DemoVpc.Outputs.ZoneAPrivateSubnetId
+        PrivateSubnetIdB:
+          !GetAtt DemoVpc.Outputs.ZoneBPrivateSubnetId
+        PublicSubnetIdA:
+          !GetAtt DemoVpc.Outputs.ZoneAPublicSubnetId
+        PublicSubnetIdB:
+          !GetAtt DemoVpc.Outputs.ZoneBPublicSubnetId

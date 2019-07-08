@@ -1,0 +1,42 @@
+'use strict';
+
+const awsParamStore = require('aws-param-store');
+const express = require('express');
+
+// Constants
+const PORT = 8080;
+const HOST = '0.0.0.0';
+const GREETING_PARAM = 'greeting';
+const FONTSIZE_PARAM = 'fontsize';
+var greeting = 'Hello';
+var fontsize = '7';
+
+// Get parameters
+// let p = awsParamStore.getParametersSync( [GREETING_PARAM, FONTSIZE_PARAM]);
+// greeting = p.Parameters
+
+/*
+var result = p.Parameters.reduce(function(map, obj) {
+    map[obj.Name] = obj.Value;
+    return map;
+}, {});
+*/
+
+// var result = new Map(arr.map(i => [i.key, i.val]));
+
+// App
+const app = express();
+app.get('/greeting/:id', (req, res) => {
+  res.send('<font size="' + fontsize + '">' + greeting + ' ' + req.params.id + '</font>\n');
+});
+app.get('/config', (req, res) => {
+  res.send(
+    '<h2>Configuration parameters</h2><hr><b>Greeting:</b> ' +
+    greeting +
+    '<br><b>Font size:</b> ' + fontsize + '\n'
+  );
+});
+app.post('/config', (req, res) => {
+});
+app.listen(PORT, HOST);
+console.log(`Running on http://${HOST}:${PORT}`);

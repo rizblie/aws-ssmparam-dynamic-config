@@ -1,0 +1,80 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Root stack for dynamic config containers demo
+
+Outputs:
+  Cluster:
+    Value: !Ref DemoCluster
+    Export:
+      Name: !Sub ${AWS::StackName}-Cluster
+
+Resources:
+
+  DemoVpc:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: VPC.yaml
+      Parameters:
+        VpcName: !Sub ${AWS::StackName}-VPC
+
+  DemoSSMParams:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: SSMParams.yaml
+      Parameters:
+        GreetingParamName:
+          Fn::Sub: /${AWS::StackName}/greeting
+        FontsizeParamName:
+          Fn::Sub: /${AWS::StackName}/fontsize
+        TopicName:
+          Fn::Sub: ${AWS::StackName}-ParamChanges
+        EventRuleName:
+          Fn::Sub: ${AWS::StackName}-ParamChangeRule
+
+  # Set up ECS Cluster
+
+  DemoCluster:
+    Type: AWS::ECS::Cluster
+    Properties: 
+      ClusterName: !Sub ${AWS::StackName}-Cluster
+
+  ParamChangeNotificationProxy:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ECS-proxy.yaml
+      Parameters:
+        ServiceName: PCNProxy
+        VpcId: !GetAtt DemoVpc.Outputs.VpcId
+        Prefix: !Sub ${AWS::StackName}
+        Image: 845041152230.dkr.ecr.eu-west-1.amazonaws.com/rizblie/not_proxy
+        TopicArn: !GetAtt DemoSSMParams.Outputs.TopicArn
+        PrivateSubnetIdA:
+          !GetAtt DemoVpc.Outputs.ZoneAPrivateSubnetId
+        PrivateSubnetIdB:
+          !GetAtt DemoVpc.Outputs.ZoneBPrivateSubnetId
+        PublicSubnetIdA:
+          !GetAtt DemoVpc.Outputs.ZoneAPublicSubnetId
+        PublicSubnetIdB:
+          !GetAtt DemoVpc.Outputs.ZoneBPublicSubnetId
+
+  GreetingService:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ECS-greeting.yaml
+      Parameters:
+        Cluster: !Ref DemoCluster
+        VpcId: !GetAtt DemoVpc.Outputs.VpcId
+        ServiceName: Greeting
+        Prefix: !Sub ${AWS::StackName}
+        GreetingImage: 845041152230.dkr.ecr.eu-west-1.amazonaws.com/rizblie/greeting
+        GreetingParamName: !Sub /${AWS::StackName}/greeting
+        FontsizeParamName: !Sub /${AWS::StackName}/fontsize
+        TopicArn: !GetAtt DemoSSMParams.Outputs.TopicArn
+        ParamChangeNotificationProxyEndpoint: !GetAtt ParamChangeNotificationProxy.Outputs.ServiceDnsName
+        PrivateSubnetIdA:
+          !GetAtt DemoVpc.Outputs.ZoneAPrivateSubnetId
+        PrivateSubnetIdB:
+          !GetAtt DemoVpc.Outputs.ZoneBPrivateSubnetId
+        PublicSubnetIdA:
+          !GetAtt DemoVpc.Outputs.ZoneAPublicSubnetId
+        PublicSubnetIdB:
+          !GetAtt DemoVpc.Outputs.ZoneBPublicSubnetId
