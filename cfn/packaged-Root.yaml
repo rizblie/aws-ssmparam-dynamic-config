@@ -29,7 +29,7 @@ Resources:
   DemoCluster:
     Type: AWS::CloudFormation::Stack
     Properties:
-      TemplateURL: https://s3.amazonaws.com/micharizdemo-scratchbucket/e3a8862d29d1add940e57631b384a3e9.template
+      TemplateURL: https://s3.amazonaws.com/micharizdemo-scratchbucket/d929bb2d81a125f283886085a99f2b8b.template
       Parameters:
         VpcId:
           Fn::GetAtt:

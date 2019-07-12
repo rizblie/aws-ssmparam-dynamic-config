@@ -196,7 +196,7 @@ Resources:
 
   ProxyService:
     Type: AWS::ECS::Service
-    DependsOn: ProxyALB
+    DependsOn: ProxyALBListener
     Properties:
       Cluster: !Ref DemoCluster
       DeploymentConfiguration: 
@@ -388,7 +388,7 @@ Resources:
 
   GreetingService:
     Type: AWS::ECS::Service
-    DependsOn: GreetingALB
+    DependsOn: GreetingALBListener
     Properties:
       Cluster: !Ref DemoCluster
       DeploymentConfiguration: 
